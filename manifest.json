@@ -1,13 +1,21 @@
 {
   "manifest_version": 3,
   "name": "Read Aloud Lite",
-  "version": "2.0",
-  "description": "**Read Aloud Lite** is a minimalist, highly responsive browser extension designed to convert selected text into natural-sounding speech with a single click.",
-  "permissions": ["storage", "activeTab"],
+  "version": "2.1",
+  "description": "Highlight any text on any website and click a button to hear it read aloud instantly.",
+  "permissions": [
+    "storage",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["content.js"]
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": true
     }
   ],
   "action": {

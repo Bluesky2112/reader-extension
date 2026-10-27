@@ -1,102 +1,61 @@
 (function() {
-  // Lấy cấu hình
-  let currentRate = 1.0;
-  let currentVoiceName = '';
-  let isEnabled = true; 
-  let isDataLoaded = false; // <--- THÊM BIẾN NÀY ĐỂ CHẶN LỖI
-
-  chrome.storage.sync.get({ rate: 1.0, voiceName: '', isEnabled: true }, (data) => {
-    currentRate = data.rate;
-    currentVoiceName = data.voiceName;
-    isEnabled = data.isEnabled;
-    isDataLoaded = true; // Đã tải xong cấu hình
-    
-    if (!isEnabled) {
-      window.speechSynthesis.cancel();
-      hideStopButton();
-    }
-  });
-
-  chrome.storage.onChanged.addListener((changes) => {
-    if (changes.rate) currentRate = changes.rate.newValue;
-    if (changes.voiceName) currentVoiceName = changes.voiceName.newValue;
-    if (changes.isEnabled) {
-      isEnabled = changes.isEnabled.newValue;
-      if (!isEnabled) {
-        window.speechSynthesis.cancel();
-        hideStopButton();
-      }
-    }
-  });
+  // Hàm lấy cấu hình mới nhất từ bộ nhớ (giải quyết lỗi kẹt trạng thái Tắt/Bật)
+  async function getConfig() {
+    return new Promise((resolve) => {
+      chrome.storage.sync.get({ rate: 1.0, voiceName: '', isEnabled: true }, (data) => {
+        resolve(data);
+      });
+    });
+  }
 
   // ==================== XỬ LÝ ĐỌC ====================
   let speakSession = 0;
-  let isWarmedUp = false;
 
-  function getSelectedVoice() {
+  function getSelectedVoice(voiceName) {
     const voices = window.speechSynthesis.getVoices();
     if (!voices || voices.length === 0) return null;
-    if (currentVoiceName) {
-      const found = voices.find(v => v.name === currentVoiceName);
+    if (voiceName) {
+      const found = voices.find(v => v.name === voiceName);
       if (found) return found;
     }
     return voices.find(v => v.lang.startsWith('vi')) || null;
   }
 
-  function speakText(text) {
-    if (!isEnabled) return; // Chốt chặn an toàn
-
+  function speakText(text, rate, voiceName) {
     const mySession = ++speakSession;
+    
+    // Dọn dẹp engine cũ
     window.speechSynthesis.cancel(); 
     hideStopButton();
+    showStopButton();
 
-    let retries = 0;
-    function waitForVoiceAndSpeak() {
-      const voice = getSelectedVoice();
-      if (voice || retries > 10) {
-        showStopButton();
-        doSpeak(voice);
-      } else {
-        retries++;
-        setTimeout(waitForVoiceAndSpeak, 100);
-      }
+    const voice = getSelectedVoice(voiceName);
+    
+    // Luôn thêm từ đệm "Vâng, " để đánh thức engine và chống mất chữ đầu
+    const finalText = "Vâng, " + text; 
+
+    const utterance = new SpeechSynthesisUtterance(finalText);
+    utterance.rate = rate;
+    
+    if (voice) {
+      utterance.voice = voice;
+      utterance.lang = voice.lang; 
+    } else {
+      utterance.lang = 'vi-VN';
     }
 
-    function doSpeak(voice) {
-      if (mySession !== speakSession || !isEnabled) return;
-
-      let finalText = text;
-      if (!isWarmedUp) finalText = "Vâng, " + finalText;
-
-      const utterance = new SpeechSynthesisUtterance(finalText);
-      utterance.rate = currentRate;
-      
-      if (voice) {
-        utterance.voice = voice;
-        utterance.lang = voice.lang; 
-      } else {
-        utterance.lang = 'vi-VN';
-      }
-
-      utterance.onend = () => {
-        if (mySession !== speakSession) return;
-        isWarmedUp = true; 
-        hideStopButton();
-      };
-
-      utterance.onerror = (e) => {
-        if (e.error === 'interrupted') return;
-        console.error('Lỗi đọc:', e.error);
-        hideStopButton();
-      };
-
-      window.speechSynthesis.speak(utterance);
-    }
-
-    setTimeout(() => {
+    utterance.onend = () => {
       if (mySession !== speakSession) return;
-      waitForVoiceAndSpeak();
-    }, 100);
+      hideStopButton();
+    };
+
+    utterance.onerror = (e) => {
+      if (e.error === 'interrupted' || e.error === 'canceled') return;
+      hideStopButton();
+    };
+
+    // Gọi trực tiếp không qua setTimeout để tránh bị Chrome chặn
+    window.speechSynthesis.speak(utterance);
   }
 
   // ==================== NÚT DỪNG ====================
@@ -107,13 +66,14 @@
       stopBtn.id = 'fb-reader-stop';
       stopBtn.textContent = '⏹ Dừng đọc';
       stopBtn.style.cssText = `
-        position: fixed; bottom: 20px; right: 20px; z-index: 2147483647;
-        padding: 8px 14px; background: #d93025; color: white;
-        border: none; border-radius: 6px; cursor: pointer; font-size: 14px;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.3); font-weight: bold;
+        position: fixed !important; bottom: 20px !important; right: 20px !important; 
+        z-index: 2147483647 !important; display: block !important;
+        padding: 8px 14px !important; background: #d93025 !important; color: white !important;
+        border: none !important; border-radius: 6px !important; cursor: pointer !important; 
+        font-size: 14px !important; box-shadow: 0 4px 12px rgba(0,0,0,0.3) !important; font-weight: bold !important;
       `;
       stopBtn.addEventListener('click', stopSpeaking);
-      document.body.appendChild(stopBtn);
+      document.documentElement.appendChild(stopBtn); 
     }
   }
 
@@ -128,11 +88,11 @@
   }
 
   // ==================== GIAO DIỆN BÔI ĐEN ====================
-  document.addEventListener('mouseup', (event) => {
-    // CHỐT CHẶN 1: Nếu chưa tải xong dữ liệu hoặc đang Tắt -> Không làm gì cả
-      console.log("Trạng thái:", { isDataLoaded, isEnabled }); 
-	if (!isDataLoaded || !isEnabled) return; 
-
+  document.addEventListener('mouseup', async (event) => {
+    // Lấy cấu hình mới nhất ngay lúc click (chống lỗi kẹt trạng thái)
+    const config = await getConfig();
+    
+    if (!config.isEnabled) return; 
     if (event.target.id === 'fb-reader-btn' || event.target.id === 'fb-reader-stop') return;
 
     const selectedText = window.getSelection().toString().trim();
@@ -145,19 +105,36 @@
     btn.id = 'fb-reader-btn';
     btn.textContent = '🔊 Đọc';
     btn.style.cssText = `
-      position: fixed; left: ${event.clientX}px; top: ${event.clientY + 15}px; 
-      z-index: 2147483647; padding: 4px 12px; background: #1a73e8; color: white;
-      border: none; border-radius: 4px; cursor: pointer; font-size: 13px;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.3); font-weight: bold;
+      position: fixed !important; left: ${event.clientX}px !important; top: ${event.clientY + 15}px !important; 
+      z-index: 2147483647 !important; display: block !important;
+      padding: 4px 12px !important; background: #1a73e8 !important; color: white !important;
+      border: none !important; border-radius: 4px !important; cursor: pointer !important; 
+      font-size: 13px !important; box-shadow: 0 2px 6px rgba(0,0,0,0.3) !important; font-weight: bold !important;
     `;
 
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
-      speakText(selectedText);
+      // Gọi hàm đọc với cấu hình mới nhất
+      speakText(selectedText, config.rate, config.voiceName);
       btn.remove();
     });
 
-    document.body.appendChild(btn);
+    document.documentElement.appendChild(btn);
+
     setTimeout(() => { if (btn.parentNode) btn.remove(); }, 3000);
   });
+
+  // ==================== CHỐNG LỖI SPA (Giao diện tự dựng lại) ====================
+  // Theo dõi nếu DeepSeek/Facebook xóa mất nút hoặc giật lag
+  const observer = new MutationObserver(() => {
+    // Nếu đang đọc mà cái nút Dừng bị trang web xóa mất, ta phải dọn dẹp engine
+    if (stopBtn && !document.getElementById('fb-reader-stop')) {
+      stopBtn = null;
+      window.speechSynthesis.cancel();
+    }
+  });
+  
+  // Kích hoạt theo dõi toàn bộ trang
+  observer.observe(document.documentElement, { childList: true, subtree: true });
+
 })();
