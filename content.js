@@ -2,15 +2,31 @@
   // Lấy cấu hình
   let currentRate = 1.0;
   let currentVoiceName = '';
+  let isEnabled = true; 
+  let isDataLoaded = false; // <--- THÊM BIẾN NÀY ĐỂ CHẶN LỖI
 
-  chrome.storage.sync.get({ rate: 1.0, voiceName: '' }, (data) => {
+  chrome.storage.sync.get({ rate: 1.0, voiceName: '', isEnabled: true }, (data) => {
     currentRate = data.rate;
     currentVoiceName = data.voiceName;
+    isEnabled = data.isEnabled;
+    isDataLoaded = true; // Đã tải xong cấu hình
+    
+    if (!isEnabled) {
+      window.speechSynthesis.cancel();
+      hideStopButton();
+    }
   });
 
   chrome.storage.onChanged.addListener((changes) => {
     if (changes.rate) currentRate = changes.rate.newValue;
     if (changes.voiceName) currentVoiceName = changes.voiceName.newValue;
+    if (changes.isEnabled) {
+      isEnabled = changes.isEnabled.newValue;
+      if (!isEnabled) {
+        window.speechSynthesis.cancel();
+        hideStopButton();
+      }
+    }
   });
 
   // ==================== XỬ LÝ ĐỌC ====================
@@ -20,7 +36,6 @@
   function getSelectedVoice() {
     const voices = window.speechSynthesis.getVoices();
     if (!voices || voices.length === 0) return null;
-
     if (currentVoiceName) {
       const found = voices.find(v => v.name === currentVoiceName);
       if (found) return found;
@@ -29,15 +44,15 @@
   }
 
   function speakText(text) {
+    if (!isEnabled) return; // Chốt chặn an toàn
+
     const mySession = ++speakSession;
-    window.speechSynthesis.cancel(); // Dừng cái cũ
+    window.speechSynthesis.cancel(); 
     hideStopButton();
 
-    // TÌM GIỌNG ĐỌC (Đợi nếu Chrome chưa load xong)
     let retries = 0;
     function waitForVoiceAndSpeak() {
       const voice = getSelectedVoice();
-      
       if (voice || retries > 10) {
         showStopButton();
         doSpeak(voice);
@@ -48,15 +63,10 @@
     }
 
     function doSpeak(voice) {
-      if (mySession !== speakSession) return;
+      if (mySession !== speakSession || !isEnabled) return;
 
-      // Bỏ chia câu, lấy nguyên văn bản
-      let finalText = '. .' + text;
-      
-      // Thêm từ đệm chống mất chữ đầu tiên (chỉ 1 lần)
-      if (!isWarmedUp) {
-         finalText = "Vâng, " + finalText;
-      }
+      let finalText = text;
+      if (!isWarmedUp) finalText = "Vâng, " + finalText;
 
       const utterance = new SpeechSynthesisUtterance(finalText);
       utterance.rate = currentRate;
@@ -83,7 +93,6 @@
       window.speechSynthesis.speak(utterance);
     }
 
-    // Đợi 100ms cho hàm cancel() dọn dẹp xong
     setTimeout(() => {
       if (mySession !== speakSession) return;
       waitForVoiceAndSpeak();
@@ -120,6 +129,10 @@
 
   // ==================== GIAO DIỆN BÔI ĐEN ====================
   document.addEventListener('mouseup', (event) => {
+    // CHỐT CHẶN 1: Nếu chưa tải xong dữ liệu hoặc đang Tắt -> Không làm gì cả
+      console.log("Trạng thái:", { isDataLoaded, isEnabled }); 
+	if (!isDataLoaded || !isEnabled) return; 
+
     if (event.target.id === 'fb-reader-btn' || event.target.id === 'fb-reader-stop') return;
 
     const selectedText = window.getSelection().toString().trim();

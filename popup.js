@@ -1,11 +1,20 @@
 const voiceSelect = document.getElementById('voiceSelect');
 const slider = document.getElementById('rate');
 const valLabel = document.getElementById('val');
+const enableToggle = document.getElementById('enableToggle');
 
-// 1. Đổ danh sách giọng đọc
+// 1. Xử lý Công tắc Bật/Tắt
+chrome.storage.sync.get({ isEnabled: true }, (data) => {
+  enableToggle.checked = data.isEnabled;
+});
+
+enableToggle.addEventListener('change', () => {
+  chrome.storage.sync.set({ isEnabled: enableToggle.checked });
+});
+
+// 2. Đổ danh sách giọng đọc
 function loadVoices() {
   let voices = speechSynthesis.getVoices();
-  // Ưu tiên lọc giọng tiếng Việt lên đầu
   voices.sort((a, b) => {
     const aIsVi = a.lang.startsWith('vi');
     const bIsVi = b.lang.startsWith('vi');
@@ -22,21 +31,19 @@ function loadVoices() {
     voiceSelect.appendChild(opt);
   });
 
-  // Khôi phục giọng đã lưu
   chrome.storage.sync.get({ voiceName: '' }, (data) => {
     if (data.voiceName) voiceSelect.value = data.voiceName;
   });
 }
 
-// Trình duyệt tải giọng bất đồng bộ
 speechSynthesis.onvoiceschanged = loadVoices;
-setTimeout(loadVoices, 100); // Fallback
+setTimeout(loadVoices, 100);
 
-// 2. Xử lý sự kiện
 voiceSelect.addEventListener('change', () => {
   chrome.storage.sync.set({ voiceName: voiceSelect.value });
 });
 
+// 3. Xử lý tốc độ đọc
 chrome.storage.sync.get({ rate: 1.0 }, (data) => {
   slider.value = data.rate;
   valLabel.textContent = data.rate.toFixed(1);
